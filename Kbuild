@@ -1630,6 +1630,9 @@ ifeq ($(CONFIG_WLAN_DEBUGFS), y)
 CDEFINES += -DWLAN_DEBUGFS
 endif
 
+# Hold RTNL_LOCK during the entire startup
+CDEFINES += -DCONFIG_HDD_INIT_WITH_RTNL_LOCK
+
 KBUILD_CPPFLAGS += $(CDEFINES)
 
 # Currently, for versions of gcc which support it, the kernel Makefile

@@ -4344,6 +4344,8 @@ QDF_STATUS hdd_start_all_adapters(hdd_context_t *hdd_ctx)
 
 		hdd_wmm_init(adapter);
 
+		adapter->scan_info.mScanPending = false;
+
 		switch (adapter->device_mode) {
 		case QDF_STA_MODE:
 		case QDF_P2P_CLIENT_MODE:
@@ -4355,7 +4357,6 @@ QDF_STATUS hdd_start_all_adapters(hdd_context_t *hdd_ctx)
 			hdd_init_station_mode(adapter);
 			/* Open the gates for HDD to receive Wext commands */
 			adapter->isLinkUpSvcNeeded = false;
-			adapter->scan_info.mScanPending = false;
 
 			/* Indicate disconnect event to supplicant if associated previously */
 			if (eConnectionState_Associated == connState ||
@@ -8855,6 +8856,11 @@ int hdd_wlan_startup(struct device *dev)
 
 	hdd_initialize_mac_address(hdd_ctx);
 
+	/* We cannot call this while holding rtnl_lock, since the
+	 * kernel is calling this with the lock */
+	ret = hdd_register_notifiers(hdd_ctx);
+	if (ret)
+		goto err_close_adapters;
 	rtnl_held = hdd_hold_rtnl_lock();
 
 	ret = hdd_open_interfaces(hdd_ctx, rtnl_held);
@@ -8862,9 +8868,6 @@ int hdd_wlan_startup(struct device *dev)
 		hdd_alert("Failed to open interfaces: %d", ret);
 		goto err_release_rtnl_lock;
 	}
-
-	hdd_release_rtnl_lock();
-	rtnl_held = false;
 
 	wlan_hdd_update_11n_mode(hdd_ctx->config);
 
@@ -8889,10 +8892,6 @@ int hdd_wlan_startup(struct device *dev)
 
 	if (hdd_ctx->rps)
 		hdd_set_rps_cpu_mask(hdd_ctx);
-
-	ret = hdd_register_notifiers(hdd_ctx);
-	if (ret)
-		goto err_close_adapters;
 
 	status = wlansap_global_init();
 	if (QDF_IS_STATUS_ERROR(status))
@@ -8943,7 +8942,11 @@ int hdd_wlan_startup(struct device *dev)
 	qdf_mc_timer_start(&hdd_ctx->iface_change_timer,
 			   hdd_ctx->config->iface_change_wait_time);
 
+	/* To avoid dead-locks, we need to hold rtnl_lock until
+	 * we notify to the userspace that the driver is ready */
 	hdd_start_complete(0);
+	hdd_release_rtnl_lock();
+	rtnl_held = false;
 	goto success;
 
 err_close_adapters:
